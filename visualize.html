@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>ThreadViz</title>
+
+	<style>
+.thread {
+	border: 1px solid cyan;
+	margin-bottom: 10px;
+}
+
+.thread .thread-duration,
+.thread .thread-blocked,
+.thread .thread-cond-wait,
+.thread .thread-join {
+	height: 100%;
+	border-right: 1px solid black;
+}
+
+.thread .thread-duration {
+	background-color: cyan;
+}
+
+.thread .thread-mut-wait {
+	background-color: yellow;
+	border-color: yellow;
+}
+
+.thread .thread-cond-wait {
+	background-color: red;
+	border-color: red;
+}
+
+.thread .thread-join {
+	background-color: orange;
+	border-color: orange;
+}
+
+#data {
+	display: none;
+}
+	</style>
+
+</head>
+<body>
+	<div id="threads"></div>
+	<div id="data">
+@DATA@
+	</div>
+
+	<script>
+let threadsEl = document.getElementById("threads");
+
+function parseLine(line) {
+	let arr = line.split(" ");
+	let [sec, nsec] = arr[0].split(":");
+	let time = parseInt(sec) + parseFloat(nsec / 1000000000);
+	let tag = arr[1];
+	return { time, tag, tids: arr.slice(2) };
+}
+
+function load(text) {
+	let lines = text.split("\n").map(l => l.trim()).filter(l => l != "");
+	let startTime = parseLine(lines[0]).time;
+	let endTime = parseLine(lines[lines.length - 1]).time;
+
+	let threads = {};
+	let tidx = 0;
+	function thread(tid) {
+		if (threads[tid] == null) {
+			threads[tid] = {
+				startTime: null,
+				endTime: null,
+				idx: tidx++,
+				mutWaitRanges: [],
+				condWaitRanges: [],
+				joinRanges: [],
+			}
+		}
+
+		return threads[tid];
+	}
+
+	function time(t) {
+		return (t - startTime) / (endTime - startTime);
+	}
+
+	for (let line of lines) {
+		let l = parseLine(line);
+		if (l.tag == "THREAD_MAIN_BEGIN") {
+			let t = thread(l.tids[0]);
+			t.startTime = time(l.time);
+		} else if (l.tag == "THREAD_MAIN_END") {
+			thread(l.tids[0]).endTime = time(l.time);
+		} else if (l.tag == "THREAD_START") {
+			thread(l.tids[1]).startTime = time(l.time);
+		} else if (l.tag == "MUTEX_LOCK_BEGIN") {
+			let t = thread(l.tids[0]);
+			t.mutWaitRanges.push([ time(l.time) ]);
+		} else if (l.tag == "MUTEX_LOCK_END") {
+			let t = thread(l.tids[0]);
+			t.mutWaitRanges[t.mutWaitRanges.length - 1].push(time(l.time));
+		} else if (l.tag == "COND_WAIT_BEGIN") {
+			let t = thread(l.tids[0]);
+			t.condWaitRanges.push([ time(l.time) ]);
+		} else if (l.tag == "COND_WAIT_END") {
+			let t = thread(l.tids[0]);
+			t.condWaitRanges[t.condWaitRanges.length - 1].push(time(l.time));
+		} else if (l.tag == "THREAD_JOIN_BEGIN") {
+			let joiner = thread(l.tids[0]);
+			joiner.joinRanges.push([ time(l.time) ]);
+		} else if (l.tag == "THREAD_JOIN_END") {
+			let joiner = thread(l.tids[0]);
+			let joinee = thread(l.tids[1]);
+			joiner.joinRanges[joiner.joinRanges.length - 1].push(time(l.time));
+			joinee.endTime = time(l.time);
+		} else {
+			console.error("Unknown tag: " + l.tag);
+		}
+	}
+
+	render(threads);
+}
+
+function prettyTime(secs) {
+	return secs.toFixed(3) + "s";
+}
+
+function render(threads, w = document.body.clientWidth, h = 50) {
+	threadsEl.innerHTML = "";
+	for (let i in threads) {
+		let thread = threads[i];
+		let threadEl = document.createElement("div");
+		threadEl.className = thread.main ? "thread thread-main" : "thread";
+		threadEl.style.position = "relative";
+		threadEl.style.width = w + "px";
+		threadEl.style.left = 0 + "px";
+		threadEl.style.height = h + "px";
+		threadsEl.appendChild(threadEl);
+
+		let durationEl = document.createElement("div");
+		durationEl.className = "thread-duration";
+		durationEl.style.position = "absolute";
+		durationEl.style.top = "0px";
+		durationEl.style.left = thread.startTime * w + "px";
+		durationEl.style.width = (thread.endTime - thread.startTime) * w + "px";
+		threadEl.appendChild(durationEl);
+
+		for (let range of thread.mutWaitRanges) {
+			let blockedEl = document.createElement("div");
+			blockedEl.className = "thread-mut-wait";
+			blockedEl.style.position = "absolute";
+			blockedEl.style.top = "0px";
+			blockedEl.style.left = range[0] * w + "px";
+			blockedEl.style.width = (range[1] - range[0]) * w + "px";
+			threadEl.appendChild(blockedEl);
+		}
+
+		for (let range of thread.condWaitRanges) {
+			let condWaitEl = document.createElement("div");
+			condWaitEl.className = "thread-cond-wait";
+			condWaitEl.style.position = "absolute";
+			condWaitEl.style.top = "0px";
+			condWaitEl.style.left = range[0] * w + "px";
+			condWaitEl.style.width = (range[1] - range[0]) * w + "px";
+			threadEl.appendChild(condWaitEl);
+		}
+
+		for (let range of thread.joinRanges) {
+			let joinEl = document.createElement("div");
+			joinEl.className = "thread-join";
+			joinEl.style.position = "absolute";
+			joinEl.style.top = "0px";
+			joinEl.style.left = range[0] * w + "px";
+			joinEl.style.width = (range[1] - range[0]) * w + "px";
+			threadEl.appendChild(joinEl);
+		}
+	}
+}
+
+load(document.getElementById("data").innerText);
+	</script>
+</body>
+</html>
