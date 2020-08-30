@@ -4,6 +4,10 @@ ThreadViz consists of two parts: `libthreadviz.so`, an `LD_PRELOAD`able library
 which intercepts various pthread functions, and `threadviz`, a utility wrapper
 script.
 
+![](https://raw.githubusercontent.com/mortie/threadviz/master/threadviz.jpg)
+
+_A visualization of a program with one main thread and 4 worker threads._
+
 ## Usage
 
 Run your program with the `threadviz` command:
